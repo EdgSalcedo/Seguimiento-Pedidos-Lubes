@@ -1,0 +1,461 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Seguimiento de pedidos abiertos</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Sora:wght@500;600;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --ink:#182430; --ink-soft:#4b5866; --line:#dfe4e9; --paper:#f5f7f9; --card:#ffffff;
+    --navy:#12233d; --navy-2:#1c3a5e; --accent:#2b6ca3; --accent-soft:#e8f1f8;
+    --ok:#1f8a55; --ok-bg:#e5f5ec; --warn:#c98a1b; --warn-bg:#fbf1de;
+    --crit:#c0392b; --crit-bg:#fbe4e1; --muted:#8993a1; --muted-bg:#eef0f3;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0;background:var(--paper);color:var(--ink);font-family:'Inter',sans-serif;font-size:14px;}
+  .wrap{max-width:1680px;margin:0 auto;padding:0 20px 40px;}
+
+  .topbar{background:linear-gradient(135deg,var(--navy) 0%,var(--navy-2) 100%);color:#fff;padding:22px 28px;margin-bottom:18px;}
+  .topbar-inner{max-width:1680px;margin:0 auto;display:flex;justify-content:space-between;align-items:flex-end;flex-wrap:wrap;gap:14px;}
+  .eyebrow{font-family:'JetBrains Mono',monospace;font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:#9fc3e0;margin:0 0 6px;}
+  .topbar h1{font-family:'Sora',sans-serif;font-size:24px;margin:0;font-weight:700;}
+  .topbar p{margin:6px 0 0;color:#c7d8e6;font-size:13px;}
+  .topbar-actions{display:flex;align-items:center;gap:12px;}
+  .last-update{font-size:12px;color:#c7d8e6;text-align:right;line-height:1.5;}
+  .last-update b{color:#fff;display:block;font-family:'JetBrains Mono',monospace;font-size:13px;}
+
+  .btn{font-family:'Inter',sans-serif;font-weight:600;font-size:13px;border-radius:7px;border:1px solid transparent;cursor:pointer;padding:10px 16px;display:inline-flex;align-items:center;gap:8px;transition:.15s;}
+  .btn-primary{background:#fff;color:var(--navy);}
+  .btn-primary:hover{background:#e9eef2;}
+  .btn-ghost{background:rgba(255,255,255,.08);color:#fff;border-color:rgba(255,255,255,.35);}
+  .btn-ghost:hover{background:rgba(255,255,255,.16);}
+
+  .panel{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:16px 18px;margin-bottom:18px;}
+
+  .filters{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-bottom:14px;}
+  .filters input[type=text], .filters select{font-family:'Inter',sans-serif;font-size:13px;padding:9px 11px;border-radius:7px;border:1px solid var(--line);background:#fff;color:var(--ink);}
+  .filters input[type=text]{width:220px;}
+  .filters label{font-size:12px;color:var(--ink-soft);font-weight:600;display:flex;align-items:center;gap:6px;}
+  .filters .grow{flex:1;}
+  .count-pill{font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--accent);background:var(--accent-soft);padding:6px 12px;border-radius:20px;font-weight:600;}
+
+  table{width:100%;table-layout:fixed;border-collapse:collapse;font-size:12px;}
+  thead th{text-align:left;font-size:10px;text-transform:uppercase;letter-spacing:.03em;color:var(--ink-soft);padding:9px 8px;border-bottom:2px solid var(--line);cursor:pointer;user-select:none;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;position:sticky;top:0;background:#fff;}
+  thead th:hover{color:var(--accent);}
+  thead th .arrow{opacity:.4;font-size:9px;margin-left:2px;}
+  tbody td{padding:6px 8px;border-bottom:1px solid var(--line);color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  tbody tr:hover{background:#fafbfc;}
+  .num{font-family:'JetBrains Mono',monospace;text-align:right;}
+  .desc-cell{white-space:normal;}
+  .wrap-cell{white-space:normal;overflow:visible;word-break:break-word;}
+  th:nth-child(1),td:nth-child(1){width:6%;}
+  th:nth-child(2),td:nth-child(2){width:9%;}
+  th:nth-child(3),td:nth-child(3){width:7%;}
+  th:nth-child(4),td:nth-child(4){width:9%;}
+  th:nth-child(5),td:nth-child(5){width:6%;}
+  th:nth-child(6),td:nth-child(6){width:16%;}
+  th:nth-child(7),td:nth-child(7){width:7%;}
+  th:nth-child(8),td:nth-child(8){width:6%;}
+  th:nth-child(9),td:nth-child(9){width:10%;}
+  th:nth-child(10),td:nth-child(10){width:10%;}
+  th:nth-child(11),td:nth-child(11){width:14%;}
+
+  .badge{display:inline-flex;align-items:center;gap:6px;padding:4px 9px;border-radius:20px;font-weight:600;font-size:11.5px;font-family:'JetBrains Mono',monospace;}
+  .badge .dot{width:7px;height:7px;border-radius:50%;display:inline-block;}
+  .badge-ok{background:var(--ok-bg);color:var(--ok);}
+  .badge-crit{background:var(--crit-bg);color:var(--crit);}
+  .badge-muted{background:var(--muted-bg);color:var(--muted);}
+  .mix-tag{font-size:11.5px;font-weight:600;padding:3px 9px;border-radius:6px;white-space:normal;}
+  .mix-in{background:var(--ok-bg);color:var(--ok);}
+  .mix-out{background:var(--muted-bg);color:var(--ink-soft);}
+  .mix-unclassified{background:#f1eee6;color:#8a7a4e;}
+  .quota-flag{display:block;margin-top:2px;font-size:10.5px;font-weight:700;color:var(--warn);}
+
+  .edit-input{width:100%;font-family:'Inter',sans-serif;font-size:12px;padding:5px 6px;border-radius:5px;border:1px solid var(--line);background:#fffdf5;}
+  .edit-input:focus{outline:2px solid var(--accent);border-color:var(--accent);}
+  .save-tag{font-size:10px;margin-left:4px;}
+  .save-ok{color:var(--ok);}
+  .save-err{color:var(--crit);}
+
+  .table-scroll{max-height:640px;overflow-y:auto;overflow-x:hidden;border:1px solid var(--line);border-radius:10px;}
+  .table-scroll table{margin:0;}
+  .empty{padding:50px 20px;text-align:center;color:var(--ink-soft);}
+  .empty b{color:var(--navy);display:block;font-size:15px;margin-bottom:6px;font-family:'Sora',sans-serif;}
+  .footnote{margin-top:14px;font-size:11.5px;color:var(--ink-soft);line-height:1.65;}
+  .footnote code{background:#eef1f4;padding:1px 6px;border-radius:4px;font-family:'JetBrains Mono',monospace;}
+  .loading-banner{padding:14px 18px;background:var(--accent-soft);color:var(--accent);border-radius:10px;margin-bottom:18px;font-weight:600;}
+  .error-banner{padding:14px 18px;background:var(--crit-bg);color:var(--crit);border-radius:10px;margin-bottom:18px;font-weight:600;white-space:pre-wrap;}
+
+  @media (max-width:900px){ .filters input[type=text]{width:100%;} }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="topbar-inner">
+    <div>
+      <p class="eyebrow">Seguimiento de pedidos abiertos</p>
+      <h1>Pedidos en Tránsito</h1>
+      <p>Datos en vivo desde Supabase — cualquiera con este link ve y actualiza el mismo estatus</p>
+    </div>
+    <div class="topbar-actions">
+      <div class="last-update" id="lastUpdate">Cargando…</div>
+      <button class="btn btn-primary" id="refreshBtn">⟳ Actualizar</button>
+    </div>
+  </div>
+</div>
+
+<div class="wrap">
+  <div id="statusBanner"></div>
+
+  <div class="panel">
+    <div class="filters">
+      <label>Proveedor
+        <select id="proveedorFilter"><option value="">Todos</option></select>
+      </label>
+      <label>Zona
+        <select id="zonaFilter"><option value="">Todas</option></select>
+      </label>
+      <input type="text" id="materialFilter" placeholder="Buscar material / código...">
+      <input type="text" id="documentoFilter" placeholder="Buscar N° documento de compras...">
+      <label>Sucursal
+        <select id="sucursalFilter"><option value="">Todas</option></select>
+      </label>
+      <label>Plazo
+        <select id="plazoFilter">
+          <option value="">Todos</option>
+          <option value="dentro">Dentro de plazo</option>
+          <option value="fuera">Fuera de plazo</option>
+          <option value="nodef">No definido</option>
+        </select>
+      </label>
+      <label>Mix
+        <select id="mixFilter">
+          <option value="">Todos</option>
+          <option value="in">Dentro de Mix</option>
+          <option value="out">Fuera de Mix</option>
+          <option value="unclassified">Sin clasificar</option>
+        </select>
+      </label>
+      <div class="grow"></div>
+      <span class="count-pill" id="countPill">0 líneas</span>
+    </div>
+
+    <div class="table-scroll">
+      <table id="dataTable">
+        <thead>
+          <tr>
+            <th data-key="fecha">F. Creación <span class="arrow"></span></th>
+            <th data-key="dias">Días s/Atención <span class="arrow"></span></th>
+            <th data-key="oc">N° OC <span class="arrow"></span></th>
+            <th data-key="proveedor">Proveedor <span class="arrow"></span></th>
+            <th data-key="codigo">Código <span class="arrow"></span></th>
+            <th data-key="descripcion">Descripción <span class="arrow"></span></th>
+            <th data-key="sucursal">Sucursal <span class="arrow"></span></th>
+            <th data-key="cantidad">Cant. Pendiente <span class="arrow"></span></th>
+            <th data-key="mixSort">Mix <span class="arrow"></span></th>
+            <th data-key="fechaAtencion">Fecha Atención <span class="arrow"></span></th>
+            <th data-key="comentarios">Comentarios <span class="arrow"></span></th>
+          </tr>
+        </thead>
+        <tbody id="tableBody"></tbody>
+      </table>
+    </div>
+    <div class="empty" id="emptyState" style="display:none;">
+      <b>Sin resultados</b>
+      Ajusta los filtros para ver pedidos en tránsito.
+    </div>
+  </div>
+
+  <p class="footnote">
+    <b>Cómo se actualiza:</b> "Fecha Atención" y "Comentarios" se guardan directo en Supabase apenas los editas (no hace falta exportar ni recargar ningún archivo) — cualquiera que abra este mismo link ve el cambio al refrescar la página.<br>
+    <b>Cómo se calcula:</b> el Plazo compara la fecha de creación + el plazo contratado (días hábiles, sin sábados ni domingos) contra hoy. El Mix se lee como distribuidor (RUC) + zona + código + mes contra tu tabla de Demanda; "Cuota superada" aparece cuando lo pedido en el mes ya excede la demanda de esa misma combinación.<br>
+    <b>Para cargar pedidos nuevos:</b> exporta tu SAP a CSV con las columnas de la tabla <code>pedidos</code> y súbelo desde el Table Editor de Supabase. Como hay una restricción única en (documento_compras, material), para refrescar del todo primero vacía la tabla (<code>truncate pedidos, seguimiento;</code> en el SQL Editor — ojo, esto también borra el seguimiento ya cargado, así que solo hazlo si tu nuevo export ya trae todas las líneas vigentes) y luego importa el CSV nuevo.
+  </p>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+<script src="config.js"></script>
+<script>
+(function(){
+  if(!window.SUPABASE_URL || !window.SUPABASE_KEY || window.SUPABASE_URL.includes('TU_PROJECT_URL')){
+    document.getElementById('statusBanner').innerHTML =
+      '<div class="error-banner">Falta configurar config.js con tu Project URL y Publishable key de Supabase. Edita ese archivo antes de desplegar.</div>';
+    return;
+  }
+  const supabase = window.supabase.createClient(window.SUPABASE_URL, window.SUPABASE_KEY);
+  const COLORS = { ok:'#1f8a55', crit:'#c0392b', muted:'#8993a1' };
+  const MESES = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Setiembre','Octubre','Noviembre','Diciembre'];
+
+  let plazoMap = new Map(), sucursalMap = new Map(), mostradorMap = new Map(), proveedorMap = {}, demandaMap = {};
+  let allRows = [];
+  let sortKey = 'dias', sortDir = -1;
+
+  function isWeekend(d){ const w=d.getDay(); return w===0 || w===6; }
+  function addBusinessDays(startDate, n){
+    let d = new Date(startDate); let added = 0;
+    while(added < n){ d.setDate(d.getDate()+1); if(!isWeekend(d)) added++; }
+    return d;
+  }
+  function stripAccents(s){ return s.normalize('NFD').replace(/[\u0300-\u036f]/g,''); }
+  function norm(s){ return stripAccents(String(s||'')).toLowerCase().trim(); }
+  function extractRuc(text){ const m=String(text||'').trim().match(/^(\d+)/); return m?m[1]:null; }
+  function fmtDate(d){ if(!(d instanceof Date) || isNaN(d)) return '—'; return d.toLocaleDateString('es-PE',{day:'2-digit',month:'2-digit',year:'numeric'}); }
+  function fmtInt(n){ return new Intl.NumberFormat('es-PE').format(Math.round(n||0)); }
+  function toDateInputValue(d){ if(!(d instanceof Date) || isNaN(d)) return ''; return d.toISOString().slice(0,10); }
+
+  const MIX_LABEL = { in:'Dentro de Mix', out:'Fuera de Mix', unclassified:'Sin clasificar' };
+  const MIX_CLASS = { in:'mix-in', out:'mix-out', unclassified:'mix-unclassified' };
+  const PLAZO_LABEL = { dentro:'Dentro de Plazo', fuera:'Fuera de Plazo', nodef:'Plazo no definido' };
+  const PLAZO_BADGE = { dentro:'badge-ok', fuera:'badge-crit', nodef:'badge-muted' };
+  const PLAZO_DOT = { dentro:COLORS.ok, fuera:COLORS.crit, nodef:COLORS.muted };
+
+  async function loadAll(){
+    document.getElementById('statusBanner').innerHTML = '<div class="loading-banner">Cargando datos desde Supabase…</div>';
+    try{
+      const [sucRes, plazoRes, cmRes, demRes, provRes, pedRes, segRes] = await Promise.all([
+        supabase.from('sucursales').select('*'),
+        supabase.from('plazos_entrega').select('*'),
+        supabase.from('codigos_mobil').select('*'),
+        supabase.from('demanda').select('*'),
+        supabase.from('proveedores').select('*'),
+        supabase.from('pedidos').select('*').gt('cantidad_pendiente', 0),
+        supabase.from('seguimiento').select('*'),
+      ]);
+      for(const [name,res] of [['sucursales',sucRes],['plazos_entrega',plazoRes],['codigos_mobil',cmRes],['demanda',demRes],['proveedores',provRes],['pedidos',pedRes],['seguimiento',segRes]]){
+        if(res.error) throw new Error(name+': '+res.error.message);
+      }
+
+      sucursalMap = new Map();
+      sucRes.data.forEach(r=> sucursalMap.set(Number(r.centro), { sucursal: r.sucursal, zona: r.zona }));
+
+      plazoMap = new Map();
+      plazoRes.data.forEach(r=> plazoMap.set(String(r.ruc)+'|'+r.centro, r.plazo));
+
+      mostradorMap = new Map();
+      cmRes.data.forEach(r=> mostradorMap.set(String(r.mostrador).trim().toUpperCase(), { codigoMobil: r.codigo_mobil, descripcion: r.descripcion }));
+
+      proveedorMap = {};
+      provRes.data.forEach(r=> proveedorMap[String(r.ruc)] = r.nombre_corto);
+
+      demandaMap = {};
+      demRes.data.forEach(r=>{
+        const key = String(r.ruc)+'-'+r.anio+'-'+r.mes+'-'+r.codigo_mobil+'-'+String(r.zona||'').trim().toLowerCase();
+        demandaMap[key] = Number(r.cantidad)||0;
+      });
+
+      const segByPedido = new Map();
+      segRes.data.forEach(r=> segByPedido.set(r.pedido_id, { fechaAtencion: r.fecha_atencion ? new Date(r.fecha_atencion) : null, comentarios: r.comentarios||'' }));
+
+      allRows = pedRes.data.map(r=>{
+        const seg = segByPedido.get(r.id) || { fechaAtencion:null, comentarios:'' };
+        return {
+          id: r.id,
+          fecha: r.fecha_documento ? new Date(r.fecha_documento) : null,
+          oc: r.documento_compras,
+          materialRaw: r.material,
+          descripcion: r.texto_breve,
+          centro: r.centro,
+          proveedorTexto: r.proveedor_texto,
+          cantidadPedido: Number(r.cantidad_pedido)||0,
+          cantidadPendiente: Number(r.cantidad_pendiente)||0,
+          fechaAtencion: seg.fechaAtencion,
+          comentarioProveedor: seg.comentarios
+        };
+      });
+
+      document.getElementById('statusBanner').innerHTML = '';
+      const now = new Date();
+      document.getElementById('lastUpdate').innerHTML = `Conectado a Supabase<b>Actualizado ${now.toLocaleString('es-PE')}</b>`;
+      render();
+    }catch(err){
+      document.getElementById('statusBanner').innerHTML = '<div class="error-banner">Error cargando datos de Supabase:\n'+err.message+'</div>';
+      document.getElementById('lastUpdate').textContent = 'Error de conexión';
+    }
+  }
+
+  const today = new Date(); today.setHours(0,0,0,0);
+  const mesActual = MESES[today.getMonth()];
+  const anioActual = today.getFullYear();
+
+  function enrich(r){
+    const mobilInfo = mostradorMap.get(String(r.materialRaw||'').trim().toUpperCase()) || null;
+    const codigoMobil = mobilInfo ? mobilInfo.codigoMobil : null;
+    const descripcion = r.descripcion || (mobilInfo ? mobilInfo.descripcion : '');
+    const sucInfo = (r.centro!==null && sucursalMap.has(Number(r.centro))) ? sucursalMap.get(Number(r.centro)) : null;
+    const sucursal = sucInfo ? sucInfo.sucursal : (r.centro!=null ? ('Centro '+r.centro+' (sin nombre)') : 'Sin asignar');
+    const zona = sucInfo ? sucInfo.zona : null;
+    const zonaNorm = zona ? String(zona).trim().toLowerCase() : null;
+
+    const ruc = extractRuc(r.proveedorTexto);
+    const proveedorNombre = (ruc && proveedorMap[ruc]) || (r.proveedorTexto||'').replace(/^\d+\s*/, '').trim();
+
+    const plazoKey = (ruc!==null && r.centro!=null) ? (ruc+'|'+r.centro) : null;
+    const plazo = plazoKey!==null ? plazoMap.get(plazoKey) : undefined;
+
+    let dias = 0;
+    if(r.fecha instanceof Date && !isNaN(r.fecha)){
+      const ms = today.getTime() - new Date(r.fecha).setHours(0,0,0,0);
+      dias = Math.max(0, Math.round(ms/86400000));
+    }
+
+    let estatusPlazo = 'nodef';
+    if(plazo!==undefined && r.fecha instanceof Date && !isNaN(r.fecha)){
+      const deadline = addBusinessDays(r.fecha, plazo);
+      estatusPlazo = (today.getTime() > deadline.setHours(0,0,0,0)) ? 'fuera' : 'dentro';
+    }
+
+    let mix = 'unclassified', cuotaSuperada = false, cuotaTexto = '';
+    if(codigoMobil!==null && zonaNorm && ruc){
+      const demKey = ruc+'-'+anioActual+'-'+mesActual+'-'+codigoMobil+'-'+zonaNorm;
+      const demandaMes = demandaMap[demKey] || 0;
+      mix = demandaMes > 0 ? 'in' : 'out';
+      if(demandaMes > 0){
+        const pedidosMes = allRows
+          .filter(x=>{
+            if(x.codigoMobil !== undefined && mostradorMap.get(String(x.materialRaw||'').trim().toUpperCase())?.codigoMobil !== codigoMobil) return false;
+            if(!(x.fecha instanceof Date) || isNaN(x.fecha)) return false;
+            if(x.fecha.getMonth()!==today.getMonth() || x.fecha.getFullYear()!==anioActual) return false;
+            const xRuc = extractRuc(x.proveedorTexto);
+            if(xRuc!==ruc) return false;
+            const xSuc = (x.centro!=null && sucursalMap.has(Number(x.centro))) ? sucursalMap.get(Number(x.centro)) : null;
+            const xZona = xSuc ? String(xSuc.zona||'').trim().toLowerCase() : null;
+            return xZona===zonaNorm;
+          })
+          .reduce((s,x)=> s+x.cantidadPedido, 0);
+        if(pedidosMes > demandaMes){ cuotaSuperada = true; cuotaTexto = `Pedido ${fmtInt(pedidosMes)} / Demanda ${fmtInt(demandaMes)}`; }
+      }
+    }
+
+    return { ...r, codigoMobil, descripcion, sucursal, zona, proveedorNombre, ruc, plazo, estatusPlazo, dias, mix, cuotaSuperada, cuotaTexto };
+  }
+
+  async function saveSeguimiento(pedidoId, fechaAtencionStr, comentarios, statusEl){
+    statusEl.textContent = 'Guardando…';
+    statusEl.className = 'save-tag';
+    const { error } = await supabase.from('seguimiento').upsert({
+      pedido_id: pedidoId,
+      fecha_atencion: fechaAtencionStr || null,
+      comentarios: comentarios || '',
+      actualizado_en: new Date().toISOString()
+    }, { onConflict: 'pedido_id' });
+    if(error){ statusEl.textContent = 'Error'; statusEl.className = 'save-tag save-err'; console.error(error); }
+    else{ statusEl.textContent = 'Guardado ✓'; statusEl.className = 'save-tag save-ok'; setTimeout(()=>{ statusEl.textContent=''; }, 2000); }
+  }
+
+  function render(){
+    const materialQ = norm(document.getElementById('materialFilter').value);
+    const documentoQ = norm(document.getElementById('documentoFilter').value);
+    const proveedorSel = document.getElementById('proveedorFilter').value;
+    const zonaSel = document.getElementById('zonaFilter').value;
+    const sucursalSel = document.getElementById('sucursalFilter').value;
+    const plazoSel = document.getElementById('plazoFilter').value;
+    const mixSel = document.getElementById('mixFilter').value;
+
+    const data = allRows.map(enrich);
+
+    const fillSelect = (id, values, current, allLabel)=>{
+      const sel = document.getElementById(id);
+      const opts = [...new Set(values)].filter(Boolean).sort();
+      const keep = opts.includes(current) ? current : '';
+      sel.innerHTML = `<option value="">${allLabel}</option>` + opts.map(v=>`<option value="${v}">${v}</option>`).join('');
+      sel.value = keep;
+    };
+    fillSelect('proveedorFilter', data.map(r=>r.proveedorNombre), proveedorSel, 'Todos');
+    fillSelect('zonaFilter', data.map(r=>r.zona), zonaSel, 'Todas');
+    fillSelect('sucursalFilter', data.map(r=>r.sucursal), sucursalSel, 'Todas');
+
+    let filtered = data.filter(r=>{
+      if(materialQ && !norm((r.codigoMobil??'')+' '+r.materialRaw+' '+r.descripcion).includes(materialQ)) return false;
+      if(documentoQ && !norm(r.oc).includes(documentoQ)) return false;
+      if(proveedorSel && r.proveedorNombre !== proveedorSel) return false;
+      if(zonaSel && r.zona !== zonaSel) return false;
+      if(sucursalSel && r.sucursal !== sucursalSel) return false;
+      if(plazoSel && r.estatusPlazo !== plazoSel) return false;
+      if(mixSel && r.mix !== mixSel) return false;
+      return true;
+    });
+
+    filtered.sort((a,b)=>{
+      let va, vb;
+      if(sortKey==='mixSort'){ va=a.mix; vb=b.mix; }
+      else if(sortKey==='codigo'){ va=a.materialRaw; vb=b.materialRaw; }
+      else if(sortKey==='proveedor'){ va=a.proveedorNombre; vb=b.proveedorNombre; }
+      else if(sortKey==='comentarios'){ va=a.comentarioProveedor; vb=b.comentarioProveedor; }
+      else { va=a[sortKey]; vb=b[sortKey]; }
+      if(sortKey==='fecha' || sortKey==='fechaAtencion'){ va = va instanceof Date ? va.getTime() : 0; vb = vb instanceof Date ? vb.getTime() : 0; }
+      if(typeof va === 'string'){ va=va.toLowerCase(); vb=(vb||'').toLowerCase(); }
+      if(va<vb) return -1*sortDir;
+      if(va>vb) return 1*sortDir;
+      return 0;
+    });
+
+    document.getElementById('countPill').textContent = `${filtered.length} línea${filtered.length===1?'':'s'}`;
+
+    const tbody = document.getElementById('tableBody');
+    if(filtered.length===0){
+      tbody.innerHTML='';
+      document.getElementById('emptyState').style.display='block';
+    } else {
+      document.getElementById('emptyState').style.display='none';
+      tbody.innerHTML = filtered.map(r=>`<tr>
+          <td>${fmtDate(r.fecha)}</td>
+          <td class="wrap-cell"><span class="badge ${PLAZO_BADGE[r.estatusPlazo]}"><span class="dot" style="background:${PLAZO_DOT[r.estatusPlazo]}"></span>${r.dias} d · ${PLAZO_LABEL[r.estatusPlazo]}</span></td>
+          <td class="num" title="${r.oc||''}">${r.oc||'—'}</td>
+          <td class="wrap-cell" title="${r.proveedorNombre||''}">${r.proveedorNombre||'—'}</td>
+          <td title="${r.materialRaw||''}">${r.materialRaw||'—'}</td>
+          <td class="desc-cell" title="${r.descripcion||''}">${r.descripcion||'—'}</td>
+          <td title="${r.sucursal||''}">${r.sucursal||'—'}</td>
+          <td class="num">${fmtInt(r.cantidadPendiente)}</td>
+          <td class="wrap-cell"><span class="mix-tag ${MIX_CLASS[r.mix]}">${MIX_LABEL[r.mix]}</span>${r.cuotaSuperada?'<span class="quota-flag">Cuota superada · '+r.cuotaTexto+'</span>':''}</td>
+          <td>
+            <input type="date" class="edit-input" data-id="${r.id}" data-field="fecha" value="${toDateInputValue(r.fechaAtencion)}">
+            <span class="save-tag" data-status-for="${r.id}-fecha"></span>
+          </td>
+          <td class="wrap-cell">
+            <input type="text" class="edit-input" data-id="${r.id}" data-field="comentario" value="${(r.comentarioProveedor||'').replace(/"/g,'&quot;')}" placeholder="Escribe un comentario...">
+            <span class="save-tag" data-status-for="${r.id}-comentario"></span>
+          </td>
+        </tr>`).join('');
+
+      tbody.querySelectorAll('input[data-field]').forEach(input=>{
+        const evt = input.type === 'date' ? 'change' : 'blur';
+        input.addEventListener(evt, ()=>{
+          const id = Number(input.dataset.id);
+          const row = allRows.find(x=>x.id===id);
+          const statusEl = tbody.querySelector(`[data-status-for="${id}-${input.dataset.field}"]`);
+          if(input.dataset.field === 'fecha'){
+            row.fechaAtencion = input.value ? new Date(input.value+'T00:00:00') : null;
+          } else {
+            row.comentarioProveedor = input.value;
+          }
+          saveSeguimiento(id, row.fechaAtencion ? toDateInputValue(row.fechaAtencion) : null, row.comentarioProveedor, statusEl);
+        });
+      });
+    }
+
+    document.querySelectorAll('#dataTable thead th').forEach(th=>{
+      const arrow = th.querySelector('.arrow');
+      if(th.dataset.key===sortKey){ arrow.textContent = sortDir===1 ? '▲' : '▼'; arrow.style.opacity=1; }
+      else { arrow.textContent=''; arrow.style.opacity=.4; }
+    });
+  }
+
+  document.querySelectorAll('#dataTable thead th').forEach(th=>{
+    th.addEventListener('click', ()=>{
+      const key = th.dataset.key;
+      if(sortKey===key) sortDir*=-1; else { sortKey=key; sortDir=1; }
+      render();
+    });
+  });
+  ['materialFilter','documentoFilter'].forEach(id=> document.getElementById(id).addEventListener('input', render));
+  ['proveedorFilter','zonaFilter','sucursalFilter','plazoFilter','mixFilter'].forEach(id=> document.getElementById(id).addEventListener('change', render));
+  document.getElementById('refreshBtn').addEventListener('click', loadAll);
+
+  loadAll();
+})();
+</script>
+</body>
+</html>
