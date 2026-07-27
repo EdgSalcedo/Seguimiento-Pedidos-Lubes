@@ -73,18 +73,13 @@
   .mix-unclassified{background:#f1eee6;color:#8a7a4e;}
   .quota-flag{display:block;margin-top:2px;font-size:10.5px;font-weight:700;color:var(--warn);}
 
-  .edit-input{width:100%;font-family:'Inter',sans-serif;font-size:12px;padding:5px 6px;border-radius:5px;border:1px solid var(--line);background:#fffdf5;}
-  .edit-input:focus{outline:2px solid var(--accent);border-color:var(--accent);}
-  .save-tag{font-size:10px;margin-left:4px;}
-  .save-ok{color:var(--ok);}
-  .save-err{color:var(--crit);}
-
   .table-scroll{max-height:640px;overflow-y:auto;overflow-x:hidden;border:1px solid var(--line);border-radius:10px;}
   .table-scroll table{margin:0;}
   .empty{padding:50px 20px;text-align:center;color:var(--ink-soft);}
   .empty b{color:var(--navy);display:block;font-size:15px;margin-bottom:6px;font-family:'Sora',sans-serif;}
   .footnote{margin-top:14px;font-size:11.5px;color:var(--ink-soft);line-height:1.65;}
   .footnote code{background:#eef1f4;padding:1px 6px;border-radius:4px;font-family:'JetBrains Mono',monospace;}
+
   .loading-banner{padding:14px 18px;background:var(--accent-soft);color:var(--accent);border-radius:10px;margin-bottom:18px;font-weight:600;}
   .error-banner{padding:14px 18px;background:var(--crit-bg);color:var(--crit);border-radius:10px;margin-bottom:18px;font-weight:600;white-space:pre-wrap;}
 
@@ -336,19 +331,6 @@
     return { ...r, codigoMobil, descripcion, sucursal, zona, proveedorNombre, ruc, plazo, estatusPlazo, dias, mix, cuotaSuperada, cuotaTexto };
   }
 
-  async function saveSeguimiento(pedidoId, fechaAtencionStr, comentarios, statusEl){
-    statusEl.textContent = 'Guardando…';
-    statusEl.className = 'save-tag';
-    const { error } = await supabase.from('seguimiento').upsert({
-      pedido_id: pedidoId,
-      fecha_atencion: fechaAtencionStr || null,
-      comentarios: comentarios || '',
-      actualizado_en: new Date().toISOString()
-    }, { onConflict: 'pedido_id' });
-    if(error){ statusEl.textContent = 'Error'; statusEl.className = 'save-tag save-err'; console.error(error); }
-    else{ statusEl.textContent = 'Guardado ✓'; statusEl.className = 'save-tag save-ok'; setTimeout(()=>{ statusEl.textContent=''; }, 2000); }
-  }
-
   function render(){
     const materialQ = norm(document.getElementById('materialFilter').value);
     const documentoQ = norm(document.getElementById('documentoFilter').value);
@@ -414,30 +396,9 @@
           <td title="${r.sucursal||''}">${r.sucursal||'—'}</td>
           <td class="num">${fmtInt(r.cantidadPendiente)}</td>
           <td class="wrap-cell"><span class="mix-tag ${MIX_CLASS[r.mix]}">${MIX_LABEL[r.mix]}</span>${r.cuotaSuperada?'<span class="quota-flag">Cuota superada · '+r.cuotaTexto+'</span>':''}</td>
-          <td>
-            <input type="date" class="edit-input" data-id="${r.id}" data-field="fecha" value="${toDateInputValue(r.fechaAtencion)}">
-            <span class="save-tag" data-status-for="${r.id}-fecha"></span>
-          </td>
-          <td class="wrap-cell">
-            <input type="text" class="edit-input" data-id="${r.id}" data-field="comentario" value="${(r.comentarioProveedor||'').replace(/"/g,'&quot;')}" placeholder="Escribe un comentario...">
-            <span class="save-tag" data-status-for="${r.id}-comentario"></span>
-          </td>
+          <td>${fmtDate(r.fechaAtencion)}</td>
+          <td class="wrap-cell" title="${r.comentarioProveedor||''}">${r.comentarioProveedor||'—'}</td>
         </tr>`).join('');
-
-      tbody.querySelectorAll('input[data-field]').forEach(input=>{
-        const evt = input.type === 'date' ? 'change' : 'blur';
-        input.addEventListener(evt, ()=>{
-          const id = Number(input.dataset.id);
-          const row = allRows.find(x=>x.id===id);
-          const statusEl = tbody.querySelector(`[data-status-for="${id}-${input.dataset.field}"]`);
-          if(input.dataset.field === 'fecha'){
-            row.fechaAtencion = input.value ? new Date(input.value+'T00:00:00') : null;
-          } else {
-            row.comentarioProveedor = input.value;
-          }
-          saveSeguimiento(id, row.fechaAtencion ? toDateInputValue(row.fechaAtencion) : null, row.comentarioProveedor, statusEl);
-        });
-      });
     }
 
     document.querySelectorAll('#dataTable thead th').forEach(th=>{
@@ -465,7 +426,9 @@
     proveedor: ['proveedor/centro suministrador','proveedor centro suministrador','proveedor'],
     cantidadPedido: ['cantidad de pedido','cantidad pedida'],
     cantidad: ['por entregar (cantidad)','cantidad pendiente por entregar','cantidad pendiente','pendiente por atender','cantidad por atender','saldo por entregar','cantidad'],
-    borrado: ['indicador de borrado','marca de borrado','borrado']
+    borrado: ['indicador de borrado','marca de borrado','borrado'],
+    fechaAtencion: ['fecha atencion','fecha de atencion'],
+    comentarios: ['comentarios del proveedor','comentarios','comentario']
   };
   function detectColumns(headerRow){
     const normalized = headerRow.map(norm);
@@ -500,8 +463,14 @@
         if(map.oc===undefined || map.codigo===undefined || map.cantidad===undefined){
           throw new Error('No se reconocieron las columnas esperadas (N° OC, Material, Por entregar). Revisa que sea el mismo formato de siempre.');
         }
+        const hasSeguimientoCols = map.fechaAtencion!==undefined || map.comentarios!==undefined;
+
         const rowsToUpsert = [];
+        // seguimiento pendiente de subir, indexado temporalmente por documento_compras+material
+        // (se resuelve a pedido_id real después de subir/leer los pedidos)
+        const seguimientoPorClave = new Map();
         let skippedDeleted = 0, skippedDelivered = 0;
+
         for(let i=1;i<aoa.length;i++){
           const r = aoa[i];
           if(!r || r.every(c=>c===undefined||c==='')) continue;
@@ -509,16 +478,31 @@
           const cantidadPendiente = map.cantidad!==undefined ? Number(r[map.cantidad])||0 : 0;
           if(cantidadPendiente<=0){ skippedDelivered++; continue; }
           const fecha = map.fecha!==undefined ? excelDateToJS(r[map.fecha]) : null;
+          const oc = map.oc!==undefined ? String(r[map.oc]??'').trim() : '';
+          const material = map.codigo!==undefined ? String(r[map.codigo]??'').trim() : '';
+
           rowsToUpsert.push({
             fecha_documento: fecha ? fecha.toISOString().slice(0,10) : null,
-            documento_compras: map.oc!==undefined ? String(r[map.oc]??'').trim() : '',
-            material: map.codigo!==undefined ? String(r[map.codigo]??'').trim() : '',
+            documento_compras: oc,
+            material: material,
             texto_breve: map.descripcion!==undefined ? String(r[map.descripcion]??'').trim() : '',
             centro: map.centro!==undefined ? Number(r[map.centro]) : null,
             proveedor_texto: map.proveedor!==undefined ? String(r[map.proveedor]??'') : '',
             cantidad_pedido: map.cantidadPedido!==undefined ? Number(r[map.cantidadPedido])||0 : 0,
             cantidad_pendiente: cantidadPendiente
           });
+
+          if(hasSeguimientoCols){
+            const fechaAtRaw = map.fechaAtencion!==undefined ? r[map.fechaAtencion] : null;
+            const fechaAt = fechaAtRaw ? excelDateToJS(fechaAtRaw) : null;
+            const comentario = map.comentarios!==undefined ? String(r[map.comentarios]??'').trim() : '';
+            if(fechaAt || comentario){
+              seguimientoPorClave.set(oc+'|'+material, {
+                fecha_atencion: fechaAt ? fechaAt.toISOString().slice(0,10) : null,
+                comentarios: comentario
+              });
+            }
+          }
         }
         if(rowsToUpsert.length===0){
           throw new Error('No se encontraron líneas pendientes por atender en este archivo.');
@@ -526,20 +510,45 @@
 
         document.getElementById('statusBanner').innerHTML = `<div class="loading-banner">Subiendo ${rowsToUpsert.length} líneas a Supabase…</div>`;
         // Supabase/PostgREST tiene límite práctico de tamaño por request; se sube en bloques.
+        // Se pide "select" de vuelta para poder mapear documento_compras+material -> id
+        // y así poder subir también el seguimiento (Fecha Atención / Comentarios) si vino en el archivo.
         const CHUNK = 500;
+        const idPorClave = new Map();
         for(let i=0;i<rowsToUpsert.length;i+=CHUNK){
           const chunk = rowsToUpsert.slice(i, i+CHUNK);
-          const { error } = await supabase.from('pedidos').upsert(chunk, { onConflict: 'documento_compras,material' });
+          const { data, error } = await supabase.from('pedidos')
+            .upsert(chunk, { onConflict: 'documento_compras,material' })
+            .select('id, documento_compras, material');
           if(error) throw new Error('Error subiendo a Supabase: '+error.message);
+          (data||[]).forEach(row=> idPorClave.set(row.documento_compras+'|'+row.material, row.id));
+        }
+
+        let seguimientoActualizados = 0;
+        if(hasSeguimientoCols && seguimientoPorClave.size>0){
+          document.getElementById('statusBanner').innerHTML = `<div class="loading-banner">Actualizando Fecha Atención / Comentarios…</div>`;
+          const seguimientoRows = [];
+          for(const [clave, seg] of seguimientoPorClave.entries()){
+            const pedidoId = idPorClave.get(clave);
+            if(pedidoId!==undefined){
+              seguimientoRows.push({ pedido_id: pedidoId, ...seg, actualizado_en: new Date().toISOString() });
+            }
+          }
+          for(let i=0;i<seguimientoRows.length;i+=CHUNK){
+            const chunk = seguimientoRows.slice(i, i+CHUNK);
+            const { error } = await supabase.from('seguimiento').upsert(chunk, { onConflict: 'pedido_id' });
+            if(error) throw new Error('Error subiendo seguimiento: '+error.message);
+          }
+          seguimientoActualizados = seguimientoRows.length;
         }
 
         document.getElementById('statusBanner').innerHTML =
           `<div class="loading-banner">Listo: ${rowsToUpsert.length} líneas actualizadas`+
+          (seguimientoActualizados? ` · ${seguimientoActualizados} con Fecha Atención/Comentarios`:'')+
           (skippedDelivered? ` · ${skippedDelivered} ya recibidas (omitidas)`:'')+
           (skippedDeleted? ` · ${skippedDeleted} anuladas (omitidas)`:'')+
           `</div>`;
         await loadAll();
-        setTimeout(()=>{ const b=document.getElementById('statusBanner'); if(b) b.innerHTML=''; }, 6000);
+        setTimeout(()=>{ const b=document.getElementById('statusBanner'); if(b) b.innerHTML=''; }, 7000);
       }catch(err){
         document.getElementById('statusBanner').innerHTML = '<div class="error-banner">'+err.message+'</div>';
       }
