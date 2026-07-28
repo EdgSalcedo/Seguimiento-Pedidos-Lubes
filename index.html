@@ -467,10 +467,14 @@
         // Se leen TODAS las líneas del archivo (no solo las pendientes), porque
         // para saber que algo YA se cerró necesitamos ver todo lo que trae el
         // export, incluidas las que ya llegaron a cantidad 0.
-        const rowsToUpsert = [];
-        const fileKeys = new Set();
+        //
+        // Un mismo OC+Material puede aparecer más de una vez en el export (por
+        // ejemplo, distintas posiciones de la misma orden para el mismo
+        // producto). Postgres no permite tocar la misma llave dos veces en un
+        // solo upsert, así que se agrupan sumando cantidades ANTES de subir.
+        const filasPorClave = new Map();
         const seguimientoPorClave = new Map();
-        let skippedDeleted = 0, sinLlaveValida = 0;
+        let skippedDeleted = 0, sinLlaveValida = 0, lineasCombinadas = 0;
 
         for(let i=1;i<aoa.length;i++){
           const r = aoa[i];
@@ -487,21 +491,33 @@
           // Una línea anulada se trata como resuelta (cantidad 0), aunque SAP
           // todavía muestre un saldo pendiente en esa columna.
           const cantidadPendiente = estaAnulado ? 0 : cantidadPendienteReal;
+          const cantidadPedido = map.cantidadPedido!==undefined ? Number(r[map.cantidadPedido])||0 : 0;
 
           const fecha = map.fecha!==undefined ? excelDateToJS(r[map.fecha]) : null;
           const clave = oc+'|'+material;
-          fileKeys.add(clave);
 
-          rowsToUpsert.push({
-            fecha_documento: fecha ? fecha.toISOString().slice(0,10) : null,
-            documento_compras: oc,
-            material: material,
-            texto_breve: map.descripcion!==undefined ? String(r[map.descripcion]??'').trim() : '',
-            centro: map.centro!==undefined ? Number(r[map.centro]) : null,
-            proveedor_texto: map.proveedor!==undefined ? String(r[map.proveedor]??'') : '',
-            cantidad_pedido: map.cantidadPedido!==undefined ? Number(r[map.cantidadPedido])||0 : 0,
-            cantidad_pendiente: cantidadPendiente
-          });
+          if(filasPorClave.has(clave)){
+            lineasCombinadas++;
+            const existente = filasPorClave.get(clave);
+            existente.cantidad_pendiente += cantidadPendiente;
+            existente.cantidad_pedido += cantidadPedido;
+            // completa datos que hubieran quedado vacíos en la primera línea vista
+            if(!existente.texto_breve) existente.texto_breve = map.descripcion!==undefined ? String(r[map.descripcion]??'').trim() : '';
+            if(!existente.proveedor_texto) existente.proveedor_texto = map.proveedor!==undefined ? String(r[map.proveedor]??'') : '';
+            if(existente.centro===null) existente.centro = map.centro!==undefined ? Number(r[map.centro]) : null;
+            if(!existente.fecha_documento && fecha) existente.fecha_documento = fecha.toISOString().slice(0,10);
+          } else {
+            filasPorClave.set(clave, {
+              fecha_documento: fecha ? fecha.toISOString().slice(0,10) : null,
+              documento_compras: oc,
+              material: material,
+              texto_breve: map.descripcion!==undefined ? String(r[map.descripcion]??'').trim() : '',
+              centro: map.centro!==undefined ? Number(r[map.centro]) : null,
+              proveedor_texto: map.proveedor!==undefined ? String(r[map.proveedor]??'') : '',
+              cantidad_pedido: cantidadPedido,
+              cantidad_pendiente: cantidadPendiente
+            });
+          }
 
           if(hasSeguimientoCols){
             const fechaAtRaw = map.fechaAtencion!==undefined ? r[map.fechaAtencion] : null;
@@ -515,6 +531,8 @@
             }
           }
         }
+        const rowsToUpsert = [...filasPorClave.values()];
+        const fileKeys = new Set(filasPorClave.keys());
         if(rowsToUpsert.length===0){
           throw new Error('No se reconocieron líneas válidas en este archivo.');
         }
@@ -572,6 +590,7 @@
           (seguimientoActualizados? ` · ${seguimientoActualizados} con Fecha Atención/Comentarios`:'')+
           (skippedDeleted? ` · ${skippedDeleted} anuladas`:'')+
           (sinLlaveValida? ` · ${sinLlaveValida} filas sin OC/material (omitidas)`:'')+
+          (lineasCombinadas? ` · ${lineasCombinadas} líneas combinadas (mismo OC+material)`:'')+
           `</div>`;
         await loadAll();
         setTimeout(()=>{ const b=document.getElementById('statusBanner'); if(b) b.innerHTML=''; }, 8000);
