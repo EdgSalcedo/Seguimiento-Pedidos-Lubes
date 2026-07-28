@@ -464,21 +464,33 @@
         }
         const hasSeguimientoCols = map.fechaAtencion!==undefined || map.comentarios!==undefined;
 
+        // Se leen TODAS las líneas del archivo (no solo las pendientes), porque
+        // para saber que algo YA se cerró necesitamos ver todo lo que trae el
+        // export, incluidas las que ya llegaron a cantidad 0.
         const rowsToUpsert = [];
-        // seguimiento pendiente de subir, indexado temporalmente por documento_compras+material
-        // (se resuelve a pedido_id real después de subir/leer los pedidos)
+        const fileKeys = new Set();
         const seguimientoPorClave = new Map();
-        let skippedDeleted = 0, skippedDelivered = 0;
+        let skippedDeleted = 0, sinLlaveValida = 0;
 
         for(let i=1;i<aoa.length;i++){
           const r = aoa[i];
           if(!r || r.every(c=>c===undefined||c==='')) continue;
-          if(map.borrado!==undefined){ const flag=String(r[map.borrado]??'').trim(); if(flag){ skippedDeleted++; continue; } }
-          const cantidadPendiente = map.cantidad!==undefined ? Number(r[map.cantidad])||0 : 0;
-          if(cantidadPendiente<=0){ skippedDelivered++; continue; }
-          const fecha = map.fecha!==undefined ? excelDateToJS(r[map.fecha]) : null;
+
           const oc = map.oc!==undefined ? String(r[map.oc]??'').trim() : '';
           const material = map.codigo!==undefined ? String(r[map.codigo]??'').trim() : '';
+          if(!oc || !material){ sinLlaveValida++; continue; }
+
+          const estaAnulado = map.borrado!==undefined && String(r[map.borrado]??'').trim()!=='';
+          if(estaAnulado) skippedDeleted++;
+
+          const cantidadPendienteReal = map.cantidad!==undefined ? Number(r[map.cantidad])||0 : 0;
+          // Una línea anulada se trata como resuelta (cantidad 0), aunque SAP
+          // todavía muestre un saldo pendiente en esa columna.
+          const cantidadPendiente = estaAnulado ? 0 : cantidadPendienteReal;
+
+          const fecha = map.fecha!==undefined ? excelDateToJS(r[map.fecha]) : null;
+          const clave = oc+'|'+material;
+          fileKeys.add(clave);
 
           rowsToUpsert.push({
             fecha_documento: fecha ? fecha.toISOString().slice(0,10) : null,
@@ -496,7 +508,7 @@
             const fechaAt = fechaAtRaw ? excelDateToJS(fechaAtRaw) : null;
             const comentario = map.comentarios!==undefined ? String(r[map.comentarios]??'').trim() : '';
             if(fechaAt || comentario){
-              seguimientoPorClave.set(oc+'|'+material, {
+              seguimientoPorClave.set(clave, {
                 fecha_atencion: fechaAt ? fechaAt.toISOString().slice(0,10) : null,
                 comentarios: comentario
               });
@@ -504,13 +516,10 @@
           }
         }
         if(rowsToUpsert.length===0){
-          throw new Error('No se encontraron líneas pendientes por atender en este archivo.');
+          throw new Error('No se reconocieron líneas válidas en este archivo.');
         }
 
-        document.getElementById('statusBanner').innerHTML = `<div class="loading-banner">Subiendo ${rowsToUpsert.length} líneas a Supabase…</div>`;
-        // Supabase/PostgREST tiene límite práctico de tamaño por request; se sube en bloques.
-        // Se pide "select" de vuelta para poder mapear documento_compras+material -> id
-        // y así poder subir también el seguimiento (Fecha Atención / Comentarios) si vino en el archivo.
+        document.getElementById('statusBanner').innerHTML = `<div class="loading-banner">Sincronizando ${rowsToUpsert.length} líneas con Supabase…</div>`;
         const CHUNK = 500;
         const idPorClave = new Map();
         for(let i=0;i<rowsToUpsert.length;i+=CHUNK){
@@ -520,6 +529,23 @@
             .select('id, documento_compras, material');
           if(error) throw new Error('Error subiendo a Supabase: '+error.message);
           (data||[]).forEach(row=> idPorClave.set(row.documento_compras+'|'+row.material, row.id));
+        }
+
+        // --- Cierre de huérfanos: pedidos que YA estaban en Supabase con saldo
+        // pendiente, pero que este archivo nuevo ya no trae (ni siquiera en 0) ---
+        document.getElementById('statusBanner').innerHTML = `<div class="loading-banner">Revisando pedidos que ya no están en el archivo…</div>`;
+        const { data: existentes, error: errExist } = await supabase
+          .from('pedidos').select('id, documento_compras, material').gt('cantidad_pendiente', 0);
+        if(errExist) throw new Error('Error revisando pedidos existentes: '+errExist.message);
+
+        const huerfanos = (existentes||[]).filter(r=> !fileKeys.has(r.documento_compras+'|'+r.material));
+        if(huerfanos.length>0){
+          const idsHuerfanos = huerfanos.map(r=>r.id);
+          for(let i=0;i<idsHuerfanos.length;i+=CHUNK){
+            const chunk = idsHuerfanos.slice(i, i+CHUNK);
+            const { error } = await supabase.from('pedidos').update({ cantidad_pendiente: 0 }).in('id', chunk);
+            if(error) throw new Error('Error cerrando pedidos huérfanos: '+error.message);
+          }
         }
 
         let seguimientoActualizados = 0;
@@ -541,19 +567,21 @@
         }
 
         document.getElementById('statusBanner').innerHTML =
-          `<div class="loading-banner">Listo: ${rowsToUpsert.length} líneas actualizadas`+
+          `<div class="loading-banner">Listo: ${rowsToUpsert.length} líneas del archivo sincronizadas`+
+          (huerfanos.length? ` · ${huerfanos.length} pedidos cerrados (ya no estaban en el archivo)`:'')+
           (seguimientoActualizados? ` · ${seguimientoActualizados} con Fecha Atención/Comentarios`:'')+
-          (skippedDelivered? ` · ${skippedDelivered} ya recibidas (omitidas)`:'')+
-          (skippedDeleted? ` · ${skippedDeleted} anuladas (omitidas)`:'')+
+          (skippedDeleted? ` · ${skippedDeleted} anuladas`:'')+
+          (sinLlaveValida? ` · ${sinLlaveValida} filas sin OC/material (omitidas)`:'')+
           `</div>`;
         await loadAll();
-        setTimeout(()=>{ const b=document.getElementById('statusBanner'); if(b) b.innerHTML=''; }, 7000);
+        setTimeout(()=>{ const b=document.getElementById('statusBanner'); if(b) b.innerHTML=''; }, 8000);
       }catch(err){
         document.getElementById('statusBanner').innerHTML = '<div class="error-banner">'+err.message+'</div>';
       }
       e.target.value = '';
     };
     reader.readAsArrayBuffer(file);
+
   });
 
   // ------------------------------------------------------------------
