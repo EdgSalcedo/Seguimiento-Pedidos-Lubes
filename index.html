@@ -210,17 +210,35 @@
   const PLAZO_BADGE = { dentro:'badge-ok', fuera:'badge-crit', nodef:'badge-muted' };
   const PLAZO_DOT = { dentro:COLORS.ok, fuera:COLORS.crit, nodef:COLORS.muted };
 
+  // Supabase/PostgREST limita cada consulta a 1000 filas por defecto. Tablas
+  // como "demanda" (miles de filas) o "pedidos" con el tiempo superan eso, así
+  // que se traen en bloques de 1000 hasta agotar la tabla.
+  async function fetchAll(table, selectCols, applyFilters){
+    const PAGE = 1000;
+    let from = 0, all = [];
+    while(true){
+      let q = supabase.from(table).select(selectCols || '*');
+      if(applyFilters) q = applyFilters(q);
+      const { data, error } = await q.range(from, from+PAGE-1);
+      if(error) return { data: null, error };
+      all = all.concat(data||[]);
+      if(!data || data.length < PAGE) break;
+      from += PAGE;
+    }
+    return { data: all, error: null };
+  }
+
   async function loadAll(){
     document.getElementById('statusBanner').innerHTML = '<div class="loading-banner">Cargando datos desde Supabase…</div>';
     try{
       const [sucRes, plazoRes, cmRes, demRes, provRes, pedRes, segRes] = await Promise.all([
-        supabase.from('sucursales').select('*'),
-        supabase.from('plazos_entrega').select('*'),
-        supabase.from('codigos_mobil').select('*'),
-        supabase.from('demanda').select('*'),
-        supabase.from('proveedores').select('*'),
-        supabase.from('pedidos').select('*').gt('cantidad_pendiente', 0),
-        supabase.from('seguimiento').select('*'),
+        fetchAll('sucursales'),
+        fetchAll('plazos_entrega'),
+        fetchAll('codigos_mobil'),
+        fetchAll('demanda'),
+        fetchAll('proveedores'),
+        fetchAll('pedidos', '*', q=> q.gt('cantidad_pendiente', 0)),
+        fetchAll('seguimiento'),
       ]);
       for(const [name,res] of [['sucursales',sucRes],['plazos_entrega',plazoRes],['codigos_mobil',cmRes],['demanda',demRes],['proveedores',provRes],['pedidos',pedRes],['seguimiento',segRes]]){
         if(res.error) throw new Error(name+': '+res.error.message);
@@ -552,8 +570,8 @@
         // --- Cierre de huérfanos: pedidos que YA estaban en Supabase con saldo
         // pendiente, pero que este archivo nuevo ya no trae (ni siquiera en 0) ---
         document.getElementById('statusBanner').innerHTML = `<div class="loading-banner">Revisando pedidos que ya no están en el archivo…</div>`;
-        const { data: existentes, error: errExist } = await supabase
-          .from('pedidos').select('id, documento_compras, material').gt('cantidad_pendiente', 0);
+        const { data: existentes, error: errExist } = await fetchAll('pedidos',
+          'id, documento_compras, material', q=> q.gt('cantidad_pendiente', 0));
         if(errExist) throw new Error('Error revisando pedidos existentes: '+errExist.message);
 
         const huerfanos = (existentes||[]).filter(r=> !fileKeys.has(r.documento_compras+'|'+r.material));
