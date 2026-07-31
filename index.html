@@ -331,7 +331,8 @@
       if(demandaMes > 0){
         const pedidosMes = allRows
           .filter(x=>{
-            if(x.codigoMobil !== undefined && mostradorMap.get(String(x.materialRaw||'').trim().toUpperCase())?.codigoMobil !== codigoMobil) return false;
+            const xCodigoMobil = mostradorMap.get(String(x.materialRaw||'').trim().toUpperCase())?.codigoMobil;
+            if(xCodigoMobil !== codigoMobil) return false;
             if(!(x.fecha instanceof Date) || isNaN(x.fecha)) return false;
             if(x.fecha.getMonth()!==today.getMonth() || x.fecha.getFullYear()!==anioActual) return false;
             const xRuc = extractRuc(x.proveedorTexto);
